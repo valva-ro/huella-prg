@@ -40,7 +40,6 @@ public class CarbonFootprintServlet extends HttpServlet {
 
     @Override
     protected void doPost(HttpServletRequest request, HttpServletResponse response) throws IOException {
-
         request.setCharacterEncoding("UTF-8");
 
         String transportStr = request.getParameter("transporte");
@@ -48,10 +47,10 @@ public class CarbonFootprintServlet extends HttpServlet {
         String daysStr = request.getParameter("dias");
         String opStr = request.getParameter("op");
 
-        // Validation with functional Optional pipeline
         TransportType transport = TransportType.fromString(transportStr);
         OperationType op = OperationType.fromString(opStr);
 
+        // Si hay transporte ni operacion valida, errorcito
         String error = Optional.ofNullable(validateInputs(transport, kmStr, daysStr, op))
                 .filter(s -> !s.isEmpty())
                 .orElse(null);
@@ -63,26 +62,35 @@ public class CarbonFootprintServlet extends HttpServlet {
 
         double km = Double.parseDouble(kmStr);
         int days = Integer.parseInt(daysStr);
-        double kg = service.calculateWeekly(transport, km, days);
+        double result = service.calculateWeekly(transport, km, days); // <- Calculo real
 
         // Sabemos que el mapa tiene definidas las operaciones que permitimos con cada logica, asi que
         // solo obtenemos la que queremos del map y ejecutamos
         // -> Si hubiera mas logica (y no solo manejo de strings), se podria hasta plantear un patron strategy
         String redirectUrl = Optional.ofNullable(operationHandlers.get(op))
-                .map(handler -> request.getContextPath() + "/huella" + handler.apply(kg))
+                .map(handler -> request.getContextPath() + "/huella" + handler.apply(result))
                 .orElseGet(() -> request.getContextPath() + "/huella?error=" + encode("Unknown operation"));
 
-        response.sendRedirect(redirectUrl);
+        response.sendRedirect(redirectUrl); // PRG -> Aca es donde desde este POST que se llamo al calcular,
+                                            // redirigimos al GET para mostrar la info.
+                                            // En el caso de clasificar impacto por ej la url quedaria
+                                            // ?op=CALC_SEMANAL&kg={result}
     }
 
     @Override
     protected void doGet(HttpServletRequest request, HttpServletResponse response) throws ServletException, IOException {
-
+        // Aca llegamos despues del post, en la redireccion
+        // Nuestros campos validos son los del jsp, que a su vez utilzamos en el map
+        // de arriba donde definimos como parsear cada string
         List<String> params = List.of("op", "error", "kg", "impact", "comp");
 
+        // Para cada param, verificamos si lo que tenemos en la url matchea
         params.forEach(p -> {
             String value = request.getParameter(p);
             if (value != null && !value.isEmpty()) {
+                // El kg es el que se completa siempre, si no esta presente es porque
+                //  - Hubo un error en el calculo
+                //  - Estan probando una url incorrecta como ?op=CALC_SEMANAL&kg=1a2b3c -> 1a2b3c no es un double => error
                 if ("kg".equals(p)) {
                     try {
                         request.setAttribute("kg", Double.parseDouble(value));
@@ -90,13 +98,15 @@ public class CarbonFootprintServlet extends HttpServlet {
                         request.setAttribute("error", "Invalid kg value");
                     }
                 } else {
+                    // Para el resto de atributos que definimos en el listado como permitidos, seteamos el valor de la URL
                     request.setAttribute(p, value);
                 }
             }
         });
 
-        request.getRequestDispatcher("/WEB-INF/views/huella.jsp")
-                .forward(request, response);
+        // Aca solo se agarran los parametros de la URL, y se envian a los atributos del JSP con el forward
+        // Solo sirve para mostrar los resultados
+        request.getRequestDispatcher("/WEB-INF/views/huella.jsp").forward(request, response);
     }
 
     private String validateInputs(TransportType transport, String kmStr, String daysStr, OperationType op) {
